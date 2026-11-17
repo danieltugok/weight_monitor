@@ -9,7 +9,6 @@
 @media (prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#181b22;--fg:#e8eaf0;--muted:#9aa1ad;--accent:#60a5fa;--goal:#4ade80;--border:#2a2f3a}}
 *{box-sizing:border-box}
 body{margin:0;font:16px/1.4 system-ui,sans-serif;background:var(--bg);color:var(--fg)}
-body:not(.is-owner) .owner, body.is-owner .guest, [hidden]{display:none !important}
 main{max-width:720px;margin:0 auto;padding:16px}
 header{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
 h1{font-size:1.4rem}
@@ -34,23 +33,12 @@ td,th{padding:6px;border-bottom:1px solid var(--border);text-align:left}
 <main>
   <header>
     <h1>Weight Monitor</h1>
-    <div class="row">
-      <label>Unit
-        <select id="unit"><option value="kg">kg</option><option value="lb">lb</option></select>
-      </label>
-      <button type="button" class="link guest" id="showLogin">Log in</button>
-      <button type="button" class="link owner" id="logout">Log out</button>
-    </div>
+    <label>Unit
+      <select id="unit"><option value="kg">kg</option><option value="lb">lb</option></select>
+    </label>
   </header>
 
-  <section id="loginBox" class="guest" hidden>
-    <form id="loginForm">
-      <label>Password <input type="password" id="password" autocomplete="current-password" required></label>
-      <button>Log in</button>
-    </form>
-  </section>
-
-  <section class="owner">
+  <section>
     <h2>Log weight</h2>
     <form id="entryForm">
       <label>Date <input type="date" id="entryDate" required></label>
@@ -59,7 +47,7 @@ td,th{padding:6px;border-bottom:1px solid var(--border);text-align:left}
     </form>
   </section>
 
-  <section class="owner">
+  <section>
     <h2>Goal</h2>
     <form id="goalForm">
       <label>Target (<span class="u"></span>) <input type="number" id="goalWeight" step="0.1" min="1" required></label>
@@ -80,10 +68,10 @@ td,th{padding:6px;border-bottom:1px solid var(--border);text-align:left}
   <section>
     <h2>History</h2>
     <table>
-      <thead><tr><th>Date</th><th>Weight</th><th>Change</th><th class="owner"></th></tr></thead>
+      <thead><tr><th>Date</th><th>Weight</th><th>Change</th><th></th></tr></thead>
       <tbody id="history"></tbody>
     </table>
-    <p class="row owner">
+    <p class="row">
       <button type="button" class="link" id="exportBtn">Export backup</button>
       <label class="link" style="flex-direction:row;cursor:pointer">Import backup <input type="file" id="importFile" accept="application/json" hidden></label>
     </p>
@@ -97,7 +85,7 @@ const DAY = 864e5;
 const $ = id => document.getElementById(id);
 
 // Data comes from the server (always in kg). The unit is each viewer's own display preference.
-let state = { entries: [], goal: null, owner: false };
+let state = { entries: [], goal: null };
 let unit = 'kg';
 try { unit = localStorage.getItem('weight-monitor-unit') === 'lb' ? 'lb' : 'kg'; } catch {}
 
@@ -152,7 +140,6 @@ const chart = new Chart($('chart'), {
 function render() {
   const e = state.entries, g = state.goal; // server returns entries sorted by date
   const last = e.at(-1), first = e[0];
-  document.body.classList.toggle('is-owner', state.owner);
   $('unit').value = unit;
   document.querySelectorAll('.u').forEach(s => s.textContent = unit);
   if (g) { $('goalWeight').value = toUnit(g.kg).toFixed(1); $('goalDate').value = g.date; }
@@ -183,18 +170,9 @@ function render() {
     const d = i ? x.kg - e[i - 1].kg : null;
     return `<tr><td>${showDate(x.date)}</td><td>${fmt(x.kg)}</td>
       <td>${d === null ? '' : (d >= 0 ? '+' : '') + toUnit(d).toFixed(1)}</td>
-      <td class="owner"><button class="link" data-del="${x.date}" aria-label="Delete ${x.date}">✕</button></td></tr>`;
+      <td><button class="link" data-del="${x.date}" aria-label="Delete ${x.date}">✕</button></td></tr>`;
   }).reverse().join('');
 }
-
-$('showLogin').onclick = () => { $('loginBox').hidden = false; $('password').focus(); };
-
-$('loginForm').onsubmit = async ev => {
-  ev.preventDefault();
-  if (await write({ action: 'login', password: $('password').value })) { $('loginForm').reset(); $('loginBox').hidden = true; }
-};
-
-$('logout').onclick = () => write({ action: 'logout' });
 
 $('entryForm').onsubmit = async ev => {
   ev.preventDefault();

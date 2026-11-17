@@ -6,7 +6,4 @@ return [
     'dsn'     => 'mysql:host=localhost;dbname=YOUR_DATABASE_NAME;charset=utf8mb4',
     'db_user' => 'YOUR_DATABASE_USER',
     'db_pass' => 'YOUR_DATABASE_PASSWORD',
-
-    // The password you type in the app to add/edit weights. At least 8 characters.
-    'password' => 'CHANGE_ME_TO_A_LONG_PASSWORD',
 ];
