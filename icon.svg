@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Full-bleed background so the icon also works as a maskable icon; artwork stays inside the central safe zone. -->
+  <rect width="512" height="512" fill="#E9EEEA"/>
+  <rect x="112" y="210" width="150" height="92" fill="#2B4C7E" opacity=".18"/>
+  <g stroke="#1F2A2E" stroke-linecap="round">
+    <line x1="112" y1="302" x2="400" y2="302" stroke-width="10"/>
+    <g stroke-width="7">
+      <line x1="112" y1="302" x2="112" y2="250"/>
+      <line x1="184" y1="302" x2="184" y2="250"/>
+      <line x1="256" y1="302" x2="256" y2="250"/>
+      <line x1="328" y1="302" x2="328" y2="250"/>
+    </g>
+    <g stroke-width="5">
+      <line x1="148" y1="302" x2="148" y2="276"/>
+      <line x1="220" y1="302" x2="220" y2="276"/>
+      <line x1="292" y1="302" x2="292" y2="276"/>
+      <line x1="364" y1="302" x2="364" y2="276"/>
+    </g>
+  </g>
+  <line x1="262" y1="186" x2="262" y2="326" stroke="#2B4C7E" stroke-width="14" stroke-linecap="round"/>
+  <line x1="400" y1="210" x2="400" y2="302" stroke="#A23E6B" stroke-width="14" stroke-linecap="round"/>
+</svg>
