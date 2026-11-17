@@ -1,6 +1,10 @@
 <?php
 // JSON API for the weight monitor (single user, no login).
-$config = require __DIR__ . '/config.php';
+// On Hostinger, config.php lives one folder above public_html so Git deploys never touch it.
+// Falls back to a config.php next to this file.
+$configFile = file_exists(__DIR__ . '/../config.php') ? __DIR__ . '/../config.php' : __DIR__ . '/config.php';
+if (!file_exists($configFile)) { http_response_code(500); header('Content-Type: application/json'); exit('{"error":"config.php is missing on the server"}'); }
+$config = require $configFile;
 
 header('Content-Type: application/json');
 
