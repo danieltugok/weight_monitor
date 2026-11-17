@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Weight Monitor</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--fg:#1d2330;--muted:#6b7280;--accent:#2563eb;--goal:#16a34a;--border:#e5e7eb}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#181b22;--fg:#e8eaf0;--muted:#9aa1ad;--accent:#60a5fa;--goal:#4ade80;--border:#2a2f3a}}
+*{box-sizing:border-box}
+body{margin:0;font:16px/1.4 system-ui,sans-serif;background:var(--bg);color:var(--fg)}
+body:not(.is-owner) .owner, body.is-owner .guest, [hidden]{display:none !important}
+main{max-width:720px;margin:0 auto;padding:16px}
+header{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+h1{font-size:1.4rem}
+h2{font-size:1rem;margin:0 0 12px}
+section{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px}
+form{display:flex;flex-wrap:wrap;gap:8px;align-items:end}
+label{display:flex;flex-direction:column;font-size:.85rem;color:var(--muted);gap:4px}
+input,select,button{font:inherit;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--fg)}
+input[type=number]{width:110px}
+button{background:var(--accent);color:#fff;border:0;cursor:pointer}
+button.link{background:none;color:var(--muted);padding:4px 8px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px}
+.stats div{font-size:.85rem;color:var(--muted)}
+.stats b{display:block;font-size:1.2rem;color:var(--fg)}
+.chart{position:relative;height:300px}
+table{width:100%;border-collapse:collapse}
+td,th{padding:6px;border-bottom:1px solid var(--border);text-align:left}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Weight Monitor</h1>
+    <div class="row">
+      <label>Unit
+        <select id="unit"><option value="kg">kg</option><option value="lb">lb</option></select>
+      </label>
+      <button type="button" class="link guest" id="showLogin">Log in</button>
+      <button type="button" class="link owner" id="logout">Log out</button>
+    </div>
+  </header>
+
+  <section id="loginBox" class="guest" hidden>
+    <form id="loginForm">
+      <label>Password <input type="password" id="password" autocomplete="current-password" required></label>
+      <button>Log in</button>
+    </form>
+  </section>
+
+  <section class="owner">
+    <h2>Log weight</h2>
+    <form id="entryForm">
+      <label>Date <input type="date" id="entryDate" required></label>
+      <label>Weight (<span class="u"></span>) <input type="number" id="entryWeight" step="0.1" min="1" required></label>
+      <button>Save</button>
+    </form>
+  </section>
+
+  <section class="owner">
+    <h2>Goal</h2>
+    <form id="goalForm">
+      <label>Target (<span class="u"></span>) <input type="number" id="goalWeight" step="0.1" min="1" required></label>
+      <label>By date <input type="date" id="goalDate" required></label>
+      <button>Set goal</button>
+      <button type="button" class="link" id="clearGoal">Clear</button>
+    </form>
+  </section>
+
+  <section>
+    <div class="stats" id="stats"></div>
+  </section>
+
+  <section>
+    <div class="chart"><canvas id="chart" aria-label="Weight history chart" role="img"></canvas></div>
+  </section>
+
+  <section>
+    <h2>History</h2>
+    <table>
+      <thead><tr><th>Date</th><th>Weight</th><th>Change</th><th class="owner"></th></tr></thead>
+      <tbody id="history"></tbody>
+    </table>
+    <p class="row owner">
+      <button type="button" class="link" id="exportBtn">Export backup</button>
+      <label class="link" style="flex-direction:row;cursor:pointer">Import backup <input type="file" id="importFile" accept="application/json" hidden></label>
+    </p>
+  </section>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script>
+const KG_PER_LB = 0.45359237;
+const DAY = 864e5;
+const $ = id => document.getElementById(id);
+
+// Data comes from the server (always in kg). The unit is each viewer's own display preference.
+let state = { entries: [], goal: null, owner: false };
+let unit = 'kg';
+try { unit = localStorage.getItem('weight-monitor-unit') === 'lb' ? 'lb' : 'kg'; } catch {}
+
+const toUnit = kg => unit === 'kg' ? kg : kg / KG_PER_LB;
+const toKg = v => unit === 'kg' ? v : v * KG_PER_LB;
+const fmt = kg => toUnit(kg).toFixed(1) + ' ' + unit;
+const ts = d => new Date(d + 'T00:00:00').getTime();
+const today = () => new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD in local time
+const showDate = d => new Date(ts(d)).toLocaleDateString();
+
+console.assert(Math.abs(100 * KG_PER_LB / KG_PER_LB - 100) < 1e-9, 'lb/kg round trip');
+
+async function api(body) {
+  const r = await fetch('api.php', body
+    ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+    : { cache: 'no-store' });
+  const data = await r.json().catch(() => ({ error: 'Server error (' + r.status + ')' }));
+  if (!r.ok) throw new Error(data.error || 'Request failed');
+  return data;
+}
+async function refresh() {
+  try { state = await api(); } catch (e) { alert('Could not load data: ' + e.message); }
+  render();
+}
+// Sends a change to the server, then reloads. Returns false (and keeps the form filled) on failure.
+async function write(body) {
+  try { await api(body); } catch (e) { alert(e.message); await refresh(); return false; }
+  await refresh();
+  return true;
+}
+
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const chart = new Chart($('chart'), {
+  type: 'line',
+  data: { datasets: [
+    { label: 'Weight', data: [], borderColor: css('--accent'), backgroundColor: css('--accent'), tension: .25 },
+    { label: 'Goal path', data: [], borderColor: css('--goal'), backgroundColor: css('--goal'), borderDash: [6, 6] },
+  ]},
+  options: {
+    maintainAspectRatio: false,
+    scales: {
+      x: { type: 'linear', ticks: { color: css('--muted'), callback: v => new Date(v).toLocaleDateString() } },
+      y: { ticks: { color: css('--muted') }, title: { display: true, color: css('--muted') } },
+    },
+    plugins: {
+      legend: { labels: { color: css('--fg') } },
+      tooltip: { callbacks: { title: i => new Date(i[0].parsed.x).toLocaleDateString() } },
+    },
+  },
+});
+
+function render() {
+  const e = state.entries, g = state.goal; // server returns entries sorted by date
+  const last = e.at(-1), first = e[0];
+  document.body.classList.toggle('is-owner', state.owner);
+  $('unit').value = unit;
+  document.querySelectorAll('.u').forEach(s => s.textContent = unit);
+  if (g) { $('goalWeight').value = toUnit(g.kg).toFixed(1); $('goalDate').value = g.date; }
+
+  const stats = [];
+  if (last) stats.push(['Current', fmt(last.kg)], ['Total change', (last.kg >= first.kg ? '+' : '') + fmt(last.kg - first.kg)]);
+  if (g) {
+    stats.push(['Goal', `${fmt(g.kg)} by ${showDate(g.date)}`]);
+    if (last) {
+      const remaining = g.kg - last.kg;
+      const days = Math.round((ts(g.date) - ts(today())) / DAY);
+      stats.push(['To go', fmt(Math.abs(remaining))]);
+      stats.push(days > 0
+        ? ['Needed pace', fmt(Math.abs(remaining) / (days / 7)) + '/week']
+        : ['Days left', 'Goal date passed']);
+    }
+  }
+  $('stats').innerHTML = stats.length
+    ? stats.map(([k, v]) => `<div>${k}<b>${v}</b></div>`).join('')
+    : '<div>No weights logged yet.</div>';
+
+  chart.data.datasets[0].data = e.map(x => ({ x: ts(x.date), y: toUnit(x.kg) }));
+  chart.data.datasets[1].data = g && last ? [{ x: ts(last.date), y: toUnit(last.kg) }, { x: ts(g.date), y: toUnit(g.kg) }] : [];
+  chart.options.scales.y.title.text = unit;
+  chart.update();
+
+  $('history').innerHTML = e.map((x, i) => {
+    const d = i ? x.kg - e[i - 1].kg : null;
+    return `<tr><td>${showDate(x.date)}</td><td>${fmt(x.kg)}</td>
+      <td>${d === null ? '' : (d >= 0 ? '+' : '') + toUnit(d).toFixed(1)}</td>
+      <td class="owner"><button class="link" data-del="${x.date}" aria-label="Delete ${x.date}">✕</button></td></tr>`;
+  }).reverse().join('');
+}
+
+$('showLogin').onclick = () => { $('loginBox').hidden = false; $('password').focus(); };
+
+$('loginForm').onsubmit = async ev => {
+  ev.preventDefault();
+  if (await write({ action: 'login', password: $('password').value })) { $('loginForm').reset(); $('loginBox').hidden = true; }
+};
+
+$('logout').onclick = () => write({ action: 'logout' });
+
+$('entryForm').onsubmit = async ev => {
+  ev.preventDefault();
+  if (await write({ action: 'save_entry', date: $('entryDate').value, kg: toKg(+$('entryWeight').value) })) $('entryWeight').value = '';
+};
+
+$('goalForm').onsubmit = ev => {
+  ev.preventDefault();
+  write({ action: 'set_goal', kg: toKg(+$('goalWeight').value), date: $('goalDate').value });
+};
+
+$('clearGoal').onclick = async () => { if (await write({ action: 'clear_goal' })) $('goalForm').reset(); };
+
+$('unit').onchange = ev => {
+  unit = ev.target.value;
+  try { localStorage.setItem('weight-monitor-unit', unit); } catch {}
+  render();
+};
+
+$('history').onclick = ev => {
+  const date = ev.target.dataset.del;
+  if (date && confirm('Delete entry for ' + showDate(date) + '?')) write({ action: 'delete_entry', date });
+};
+
+$('exportBtn').onclick = () => {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify({ entries: state.entries, goal: state.goal }, null, 2)], { type: 'application/json' }));
+  a.download = `weight-monitor-${today()}.json`;
+  a.click();
+};
+
+$('importFile').onchange = async ev => {
+  try {
+    const data = JSON.parse(await ev.target.files[0].text());
+    if (confirm('Replace ALL data on the server with this backup?')) await write({ action: 'import', entries: data.entries, goal: data.goal ?? null });
+  } catch { alert('That file is not a valid Weight Monitor backup.'); }
+  ev.target.value = '';
+};
+
+$('entryDate').value = today();
+refresh();
+</script>
+</body>
+</html>
