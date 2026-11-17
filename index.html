@@ -86,6 +86,9 @@ h2{font-size:1.125rem;font-weight:700;margin:0 0 12px}
 .del{border:0;background:none;color:var(--muted);cursor:pointer;width:2rem;height:2rem;border-radius:8px}
 .del:hover{background:var(--surface);color:var(--goal)}
 .empty{color:var(--muted)}
+.goals{margin:12px 0 0}
+.goals li{grid-template-columns:1fr auto 6rem 2rem}
+.goals .reached{color:var(--weight)}
 
 /* Goal + backup */
 details{border-top:1px solid var(--line);padding:16px 0}
@@ -113,7 +116,7 @@ details form{display:flex;flex-wrap:wrap;gap:8px;align-items:end;margin-top:12px
     <p class="since num" id="since">Loading…</p>
   </section>
 
-  <section class="ruler" id="ruler" hidden aria-label="Progress toward goal">
+  <section class="ruler" id="ruler" hidden aria-label="Progress toward next goal">
     <div class="tape"><div class="fill" id="fill"></div><div class="goalpin"></div><div class="marker" id="marker"></div></div>
     <div class="ends num"><span id="startLabel"></span><b id="goalLabel"></b></div>
     <p class="pace num" id="pace"></p>
@@ -126,18 +129,18 @@ details form{display:flex;flex-wrap:wrap;gap:8px;align-items:end;margin-top:12px
   </form>
 
   <h2>Progress</h2>
-  <div class="chart"><canvas id="chart" aria-label="Chart of weight over time with the path to the goal" role="img"></canvas></div>
+  <div class="chart"><canvas id="chart" aria-label="Chart of weight over time with goals" role="img"></canvas></div>
 
   <h2>History</h2>
   <ul class="history num" id="history"></ul>
 
   <details id="goalBox">
-    <summary id="goalSummary">Set a goal</summary>
+    <summary id="goalSummary">Add a goal</summary>
+    <ul class="history goals num" id="goalList"></ul>
     <form id="goalForm">
       <label class="field"><span>Target weight (<span class="u"></span>)</span> <input type="number" id="goalWeight" step="0.1" min="1" inputmode="decimal" required></label>
       <label class="field">Reach it by <input type="date" id="goalDate" required></label>
-      <button class="btn">Save goal</button>
-      <button type="button" class="link" id="clearGoal">Remove goal</button>
+      <button class="btn">Add goal</button>
     </form>
   </details>
 
@@ -157,7 +160,7 @@ const DAY = 864e5;
 const $ = id => document.getElementById(id);
 
 // Data comes from the server (always in kg). The unit is each viewer's own display preference.
-let state = { entries: [], goal: null };
+let state = { entries: [], goals: [] };
 let unit = 'kg';
 try { unit = localStorage.getItem('weight-monitor-unit') === 'lb' ? 'lb' : 'kg'; } catch {}
 
@@ -196,7 +199,8 @@ const chart = new Chart($('chart'), {
   type: 'line',
   data: { datasets: [
     { label: 'Weight', data: [], borderColor: css('--weight'), backgroundColor: css('--weight'), borderWidth: 2.5, pointRadius: 3, tension: .3 },
-    { label: 'Path to goal', data: [], borderColor: css('--goal'), backgroundColor: css('--goal'), borderWidth: 2, borderDash: [6, 6], pointRadius: [0, 5] },
+    { label: 'Path to goals', data: [], borderColor: css('--goal'), backgroundColor: css('--goal'), borderWidth: 2, borderDash: [6, 6], pointRadius: 0, pointHitRadius: 0 },
+    { label: 'Goals', data: [], showLine: false, borderColor: css('--goal'), backgroundColor: css('--goal'), pointRadius: 5, pointHoverRadius: 7 },
   ]},
   options: {
     maintainAspectRatio: false,
@@ -218,8 +222,15 @@ const chart = new Chart($('chart'), {
 });
 
 function render() {
-  const e = state.entries, g = state.goal; // server returns entries sorted by date
+  const e = state.entries, goals = state.goals; // server returns both sorted by date
   const last = e.at(-1), first = e[0];
+  const g = goals.find(x => x.date >= today()) ?? goals.at(-1); // the next upcoming goal, else the latest one
+  const goalStatus = x => {
+    if (!last) return '';
+    const dir = Math.sign(x.kg - first.kg) || 1;
+    if (e.some(w => w.date <= x.date && (x.kg - w.kg) * dir <= 0)) return 'Reached';
+    return x.date < today() ? 'Missed' : toUnit(Math.abs(x.kg - last.kg)).toFixed(1) + ' to go';
+  };
   $('u-' + unit).checked = true;
   document.querySelectorAll('.u').forEach(s => s.textContent = unit);
 
@@ -235,23 +246,36 @@ function render() {
     const pct = total ? Math.min(100, Math.max(0, done / total * 100)) : 100;
     requestAnimationFrame(() => { $('fill').style.width = pct + '%'; $('marker').style.left = pct + '%'; });
     $('startLabel').textContent = 'Start ' + fmt(first.kg);
-    $('goalLabel').textContent = 'Goal ' + fmt(g.kg);
+    $('goalLabel').textContent = (goals.length > 1 ? 'Next goal ' : 'Goal ') + fmt(g.kg);
     const remaining = g.kg - last.kg;
     const days = Math.round((ts(g.date) - ts(today())) / DAY);
     $('pace').textContent = remaining * Math.sign(total || 1) <= 0 ? `Goal reached. ${fmt(g.kg)} was the target.`
       : days > 0 ? `${fmt(Math.abs(remaining))} to go. That’s ${fmt(Math.abs(remaining) / (days / 7))} a week until ${showDate(g.date)}.`
-      : `${fmt(Math.abs(remaining))} to go. The goal date, ${showDate(g.date)}, has passed. Set a new date below.`;
+      : `${fmt(Math.abs(remaining))} to go. The goal date, ${showDate(g.date)}, has passed. Add a new goal below.`;
   }
 
-  $('goalSummary').textContent = g ? `Goal: ${fmt(g.kg)} by ${showDate(g.date)}` : 'Set a goal';
-  if (g) { $('goalWeight').value = toUnit(g.kg).toFixed(1); $('goalDate').value = g.date; }
+  $('goalSummary').textContent = !g ? 'Add a goal'
+    : goals.length > 1 ? `Goals: next is ${fmt(g.kg)} by ${showDate(g.date)}` : `Goal: ${fmt(g.kg)} by ${showDate(g.date)}`;
+  $('goalList').innerHTML = goals.map(x => {
+    const st = goalStatus(x);
+    return `<li>
+      <span>${showDate(x.date)}</span>
+      <span class="w">${fmt(x.kg)}</span>
+      <span class="d${st === 'Reached' ? ' reached' : ''}">${st}</span>
+      <button class="del" data-delgoal="${x.date}" aria-label="Delete goal for ${showDate(x.date)}">✕</button>
+    </li>`;
+  }).join('');
 
   chart.data.datasets[0].data = e.map(x => ({ x: ts(x.date), y: toUnit(x.kg) }));
-  chart.data.datasets[1].data = g && last ? [{ x: ts(last.date), y: toUnit(last.kg) }, { x: ts(g.date), y: toUnit(g.kg) }] : [];
-  chart.options.plugins.legend.display = !!(g && last);
+  const point = x => ({ x: ts(x.date), y: toUnit(x.kg) });
+  chart.data.datasets[1].data = last ? [last, ...goals.filter(x => x.date > last.date)].map(point) : [];
+  if (chart.data.datasets[1].data.length < 2) chart.data.datasets[1].data = [];
+  chart.data.datasets[2].data = goals.map(point);
+  chart.options.plugins.legend.display = goals.length > 0;
   // Fit the date axis to the data instead of Chart.js's rounded padding.
-  chart.options.scales.x.min = first ? ts(first.date) : undefined;
-  chart.options.scales.x.max = g && last ? Math.max(ts(g.date), ts(last.date)) : last ? ts(last.date) : undefined;
+  const dates = [...e, ...goals].map(x => ts(x.date));
+  chart.options.scales.x.min = dates.length ? Math.min(...dates) : undefined;
+  chart.options.scales.x.max = dates.length ? Math.max(...dates) : undefined;
   chart.update();
 
   $('history').innerHTML = e.length ? e.map((x, i) => `<li>
@@ -268,12 +292,17 @@ $('entryForm').onsubmit = async ev => {
   if (await write({ action: 'save_entry', date: $('entryDate').value, kg: toKg(+$('entryWeight').value) })) $('entryWeight').value = '';
 };
 
-$('goalForm').onsubmit = ev => {
+$('goalForm').onsubmit = async ev => {
   ev.preventDefault();
-  write({ action: 'set_goal', kg: toKg(+$('goalWeight').value), date: $('goalDate').value });
+  const date = $('goalDate').value;
+  if (state.goals.some(x => x.date === date) && !confirm('You already have a goal on ' + showDate(date) + '. Replace it?')) return;
+  if (await write({ action: 'save_goal', kg: toKg(+$('goalWeight').value), date })) $('goalForm').reset();
 };
 
-$('clearGoal').onclick = async () => { if (await write({ action: 'clear_goal' })) $('goalForm').reset(); };
+$('goalList').onclick = ev => {
+  const date = ev.target.dataset.delgoal;
+  if (date && confirm('Delete the goal for ' + showDate(date) + '?')) write({ action: 'delete_goal', date });
+};
 
 document.querySelectorAll('input[name=unit]').forEach(r => r.onchange = () => {
   unit = r.value;
@@ -288,7 +317,7 @@ $('history').onclick = ev => {
 
 $('exportBtn').onclick = () => {
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([JSON.stringify({ entries: state.entries, goal: state.goal }, null, 2)], { type: 'application/json' }));
+  a.href = URL.createObjectURL(new Blob([JSON.stringify({ entries: state.entries, goals: state.goals }, null, 2)], { type: 'application/json' }));
   a.download = `weight-monitor-${today()}.json`;
   a.click();
 };
@@ -296,7 +325,7 @@ $('exportBtn').onclick = () => {
 $('importFile').onchange = async ev => {
   try {
     const data = JSON.parse(await ev.target.files[0].text());
-    if (confirm('Replace all your data with this backup?')) await write({ action: 'import', entries: data.entries, goal: data.goal ?? null });
+    if (confirm('Replace all your data with this backup?')) await write({ action: 'import', entries: data.entries, goals: data.goals ?? (data.goal ? [data.goal] : []) }); // older backups had one "goal"
   } catch { alert('That file isn’t a Weight Monitor backup. Choose a .json file downloaded from this page.'); }
   ev.target.value = '';
 };
