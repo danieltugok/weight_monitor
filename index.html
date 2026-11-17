@@ -18,12 +18,12 @@
 <style>
 :root{
   --paper:#E9EEEA; --surface:#F7F9F7; --ink:#1F2A2E; --muted:#5D6B6E; --line:#CBD5CF;
-  --weight:#2B4C7E; --goal:#A23E6B; --on-accent:#fff;
+  --weight:#2B4C7E; --goal:#A23E6B; --mass:#B7791F; --on-accent:#fff;
   color-scheme:light dark;
 }
 @media (prefers-color-scheme:dark){:root{
   --paper:#151B1D; --surface:#1D2528; --ink:#E4EAE7; --muted:#93A19F; --line:#33403F;
-  --weight:#8FB3E8; --goal:#E58AB4; --on-accent:#151B1D;
+  --weight:#8FB3E8; --goal:#E58AB4; --mass:#E3B341; --on-accent:#151B1D;
 }}
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
@@ -75,6 +75,14 @@ button,input{font:inherit;color:inherit}
 .btn:active{transform:translateY(1px)}
 @media (min-width:520px){.btn{flex:0 0 auto}}
 
+/* Supplement check-in */
+.mass{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:32px 0 0}
+.mass-btn{border:2px solid var(--mass);border-radius:999px;padding:12px 22px;background:var(--mass);color:#1F2A2E;
+  font-weight:800;font-size:1.0625rem;cursor:pointer}
+.mass-btn[aria-pressed=true]{background:transparent;color:var(--ink)}
+.mass-btn[aria-pressed=true]::before{content:"✓ ";color:var(--mass)}
+.mass-note{color:var(--muted);font-size:.9375rem}
+
 h2{font-size:1.125rem;font-weight:700;margin:0 0 12px}
 .chart{position:relative;height:260px;margin:0 -4px 40px}
 
@@ -122,6 +130,11 @@ details form{display:flex;flex-wrap:wrap;gap:8px;align-items:end;margin-top:12px
     <p class="pace num" id="pace"></p>
   </section>
 
+  <section class="mass">
+    <button type="button" class="mass-btn" id="massBtn" aria-pressed="false">Took my mass today</button>
+    <span class="mass-note num" id="massNote"></span>
+  </section>
+
   <form class="log" id="entryForm">
     <label class="field">Date <input type="date" id="entryDate" required></label>
     <label class="field weight"><span>Weight (<span class="u"></span>)</span> <input type="number" id="entryWeight" step="0.1" min="1" inputmode="decimal" placeholder="0.0" required></label>
@@ -160,7 +173,7 @@ const DAY = 864e5;
 const $ = id => document.getElementById(id);
 
 // Data comes from the server (always in kg). The unit is each viewer's own display preference.
-let state = { entries: [], goals: [] };
+let state = { entries: [], goals: [], intakes: [] };
 let unit = 'kg';
 try { unit = localStorage.getItem('weight-monitor-unit') === 'lb' ? 'lb' : 'kg'; } catch {}
 
@@ -201,6 +214,9 @@ const chart = new Chart($('chart'), {
     { label: 'Weight', data: [], borderColor: css('--weight'), backgroundColor: css('--weight'), borderWidth: 2.5, pointRadius: 3, tension: .3 },
     { label: 'Path to goals', data: [], borderColor: css('--goal'), backgroundColor: css('--goal'), borderWidth: 2, borderDash: [6, 6], pointRadius: 0, pointHitRadius: 0 },
     { label: 'Goals', data: [], showLine: false, borderColor: css('--goal'), backgroundColor: css('--goal'), pointRadius: 5, pointHoverRadius: 7 },
+    // Supplement days: pins along the bottom, on their own hidden 0–1 axis so they don't stretch the weight scale.
+    { label: 'Mass taken', data: [], yAxisID: 'pins', showLine: false, borderColor: css('--mass'), backgroundColor: css('--mass'),
+      pointStyle: 'triangle', pointRadius: 5, pointHoverRadius: 7 },
   ]},
   options: {
     maintainAspectRatio: false,
@@ -210,12 +226,13 @@ const chart = new Chart($('chart'), {
       x: { type: 'linear', grid: { display: false }, border: { color: css('--line') },
            ticks: { color: css('--muted'), maxTicksLimit: 5, callback: v => new Date(v).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) } },
       y: { grid: { color: css('--line') }, border: { display: false }, ticks: { color: css('--muted'), maxTicksLimit: 6 } },
+      pins: { display: false, min: 0, max: 1 },
     },
     plugins: {
       legend: { position: 'bottom', align: 'start', labels: { color: css('--muted'), boxWidth: 14, boxHeight: 2 } },
       tooltip: { callbacks: {
         title: i => new Date(i[0].parsed.x).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }),
-        label: i => `${i.dataset.label}: ${i.parsed.y.toFixed(1)} ${unit}`,
+        label: i => i.dataset.yAxisID === 'pins' ? i.dataset.label : `${i.dataset.label}: ${i.parsed.y.toFixed(1)} ${unit}`,
       } },
     },
   },
@@ -254,6 +271,12 @@ function render() {
       : `${fmt(Math.abs(remaining))} to go. The goal date, ${showDate(g.date)}, has passed. Add a new goal below.`;
   }
 
+  const takenToday = state.intakes.includes(today());
+  $('massBtn').setAttribute('aria-pressed', takenToday);
+  $('massBtn').textContent = takenToday ? 'Mass taken today' : 'Took my mass today';
+  const week = state.intakes.filter(d => (ts(today()) - ts(d)) / DAY < 7 && d <= today()).length;
+  $('massNote').textContent = takenToday ? `${week} of the last 7 days. Tap again to undo.` : state.intakes.length ? `${week} of the last 7 days` : '';
+
   $('goalSummary').textContent = !g ? 'Add a goal'
     : goals.length > 1 ? `Goals: next is ${fmt(g.kg)} by ${showDate(g.date)}` : `Goal: ${fmt(g.kg)} by ${showDate(g.date)}`;
   $('goalList').innerHTML = goals.map(x => {
@@ -271,9 +294,10 @@ function render() {
   chart.data.datasets[1].data = last ? [last, ...goals.filter(x => x.date > last.date)].map(point) : [];
   if (chart.data.datasets[1].data.length < 2) chart.data.datasets[1].data = [];
   chart.data.datasets[2].data = goals.map(point);
-  chart.options.plugins.legend.display = goals.length > 0;
+  chart.data.datasets[3].data = state.intakes.map(d => ({ x: ts(d), y: 0.03 }));
+  chart.options.plugins.legend.display = goals.length > 0 || state.intakes.length > 0;
   // Fit the date axis to the data instead of Chart.js's rounded padding.
-  const dates = [...e, ...goals].map(x => ts(x.date));
+  const dates = [...e, ...goals].map(x => ts(x.date)).concat(state.intakes.map(ts));
   chart.options.scales.x.min = dates.length ? Math.min(...dates) : undefined;
   chart.options.scales.x.max = dates.length ? Math.max(...dates) : undefined;
   chart.update();
@@ -299,6 +323,11 @@ $('goalForm').onsubmit = async ev => {
   if (await write({ action: 'save_goal', kg: toKg(+$('goalWeight').value), date })) $('goalForm').reset();
 };
 
+$('massBtn').onclick = () => {
+  const date = today();
+  write({ action: state.intakes.includes(date) ? 'delete_intake' : 'save_intake', date });
+};
+
 $('goalList').onclick = ev => {
   const date = ev.target.dataset.delgoal;
   if (date && confirm('Delete the goal for ' + showDate(date) + '?')) write({ action: 'delete_goal', date });
@@ -317,7 +346,7 @@ $('history').onclick = ev => {
 
 $('exportBtn').onclick = () => {
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([JSON.stringify({ entries: state.entries, goals: state.goals }, null, 2)], { type: 'application/json' }));
+  a.href = URL.createObjectURL(new Blob([JSON.stringify({ entries: state.entries, goals: state.goals, intakes: state.intakes }, null, 2)], { type: 'application/json' }));
   a.download = `weight-monitor-${today()}.json`;
   a.click();
 };
@@ -325,7 +354,7 @@ $('exportBtn').onclick = () => {
 $('importFile').onchange = async ev => {
   try {
     const data = JSON.parse(await ev.target.files[0].text());
-    if (confirm('Replace all your data with this backup?')) await write({ action: 'import', entries: data.entries, goals: data.goals ?? (data.goal ? [data.goal] : []) }); // older backups had one "goal"
+    if (confirm('Replace all your data with this backup?')) await write({ action: 'import', entries: data.entries, goals: data.goals ?? (data.goal ? [data.goal] : []), intakes: data.intakes ?? [] }); // older backups had one "goal"
   } catch { alert('That file isn’t a Weight Monitor backup. Choose a .json file downloaded from this page.'); }
   ev.target.value = '';
 };

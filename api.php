@@ -15,6 +15,7 @@ try {
     // Weights are stored in kg; the unit is only a display preference in the browser.
     $db->exec('CREATE TABLE IF NOT EXISTS entries (date CHAR(10) PRIMARY KEY, kg DOUBLE NOT NULL)');
     $db->exec('CREATE TABLE IF NOT EXISTS goals (date CHAR(10) PRIMARY KEY, kg DOUBLE NOT NULL)');
+    $db->exec('CREATE TABLE IF NOT EXISTS intakes (date CHAR(10) PRIMARY KEY)'); // days the mass supplement was taken
     // shortcut: one-time move from the old single-goal table; delete this block once the live site has loaded once.
     try { $db->query('SELECT 1 FROM goal LIMIT 1'); $oldGoalTable = true; } catch (PDOException $e) { $oldGoalTable = false; }
     if ($oldGoalTable) {
@@ -25,7 +26,8 @@ try {
     if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         $rows = fn($table) => array_map(fn($r) => ['date' => $r['date'], 'kg' => (float)$r['kg']],
             $db->query("SELECT date, kg FROM $table ORDER BY date")->fetchAll(PDO::FETCH_ASSOC));
-        reply(['entries' => $rows('entries'), 'goals' => $rows('goals')]);
+        $intakes = $db->query('SELECT date FROM intakes ORDER BY date')->fetchAll(PDO::FETCH_COLUMN);
+        reply(['entries' => $rows('entries'), 'goals' => $rows('goals'), 'intakes' => $intakes]);
     }
 
     // Requiring a JSON body blocks cross-site form posts (CSRF): browsers can't send it cross-origin without CORS.
@@ -58,14 +60,27 @@ try {
             $require($validDate($in['date'] ?? null));
             $db->prepare('DELETE FROM goals WHERE date = ?')->execute([$in['date']]);
             break;
+        case 'save_intake':
+            $require($validDate($in['date'] ?? null));
+            $db->prepare('REPLACE INTO intakes (date) VALUES (?)')->execute([$in['date']]);
+            break;
+        case 'delete_intake':
+            $require($validDate($in['date'] ?? null));
+            $db->prepare('DELETE FROM intakes WHERE date = ?')->execute([$in['date']]);
+            break;
         case 'import': // replaces everything with a backup file's contents
-            $require($validList($in['entries'] ?? null) && $validList($in['goals'] ?? null));
+            $intakes = $in['intakes'] ?? [];
+            $require($validList($in['entries'] ?? null) && $validList($in['goals'] ?? null)
+                && is_array($intakes) && array_reduce($intakes, fn($ok, $d) => $ok && $validDate($d), true));
             $db->beginTransaction();
             foreach (['entries', 'goals'] as $table) {
                 $db->exec("DELETE FROM $table");
                 $ins = $db->prepare("REPLACE INTO $table (date, kg) VALUES (?, ?)");
                 foreach ($in[$table] as $x) $ins->execute([$x['date'], $x['kg']]);
             }
+            $db->exec('DELETE FROM intakes');
+            $ins = $db->prepare('REPLACE INTO intakes (date) VALUES (?)');
+            foreach ($intakes as $d) $ins->execute([$d]);
             $db->commit();
             break;
         default:
